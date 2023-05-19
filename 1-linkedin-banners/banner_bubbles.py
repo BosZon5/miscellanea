@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sun Apr  9 22:40:28 2023
+Employ 'bubbles_sentences.py' to generate a LinkedIn banner whose text is plotted 
+with bubbles style.
 
-@author: andreaboselli
+@author: Andrea Boselli
 """
 
 #%% Preparatory code
@@ -30,7 +31,7 @@ small_words = {
 
 # Import libraries
 
-import BubbleSentences   as bs
+import bubbles_sentences as bs
 import numpy             as np
 import matplotlib.pyplot as plt
 

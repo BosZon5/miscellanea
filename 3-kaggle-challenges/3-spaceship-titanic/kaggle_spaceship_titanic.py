@@ -6,7 +6,7 @@ part of the records lacked of some values, great importance has been given to th
 analysis (contingency tables, countplots, histograms, etc...), that allowed to impute
 many of the missing values
 
-@author: andre
+@author: Andrea Boselli
 """
 
 #%% Relevant libraries

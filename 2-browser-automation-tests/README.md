@@ -6,8 +6,8 @@ Scripts that perform *browser automation* on different websites, in most cases t
 
 ## Sections
 
-```tests-github.py```: some automated tests on *GitHub* website;
+```tests_github.py```: some automated tests on *GitHub* website;
 
-```tests-thetvdb-tabs.py```: automated tests on *TheTVDB* website; differently from ```tests-thetvdb.py``` script, when multiple pages of the same kind need to be opened, they are opened in *new tabs*;
+```tests_thetvdb_tabs.py```: automated tests on *TheTVDB* website; differently from ```tests_thetvdb.py``` script, when multiple pages of the same kind need to be opened, they are opened in *new tabs*;
 
-```tests-thetvdb.py```: automated tests on *TheTVDB* website.
+```tests_thetvdb.py```: automated tests on *TheTVDB* website.

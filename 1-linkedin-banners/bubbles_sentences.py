@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Apr  7 13:32:58 2023
+Utilities to print strings with a bubbles style, where each trait is made up by
+a cloud of bubbles. 
 
-@author: andreaboselli
+@author: Andrea Boselli
 """
 
 #%% Import libraries, and define variables and functions
