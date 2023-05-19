@@ -2,9 +2,7 @@
 
 ## Overview
 
-<p align="justify">
 Solutions to some *Kaggle challenges*, featuring the analyses of the datasets and the workflows of prediction generation.
-</p>
 
 ## Sections
 

@@ -2,9 +2,7 @@
 
 ## Overview
 
-<p align="justify">
 Scripts that produce *LinkedIn banners* with original styles. Some instances are available in ```images``` folder.
-</p>
 
 ## Sections
 

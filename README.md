@@ -2,9 +2,7 @@
 
 ## Overview
 
-<p align="justify">
 This repo contains miscellaneous remarkable code I wrote. Its aim is to provide in an organized manner many utilities I developed and to prove some of my coding skills.
-</p>
 
 ## Sections
 

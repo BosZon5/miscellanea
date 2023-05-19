@@ -2,9 +2,7 @@
 
 ## Overview
 
-<p align="justify">
 Scripts that perform *browser automation* on different websites, in most cases to perform *automated tests*; *webdrivers* are employed for the purpose.
-</p>
 
 ## Sections
 
