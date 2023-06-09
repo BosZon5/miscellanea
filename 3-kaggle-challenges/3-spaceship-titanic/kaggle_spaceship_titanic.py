@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Analysis of the Spaceship Titanic dataset for the Getting Started Kaggle Competition: 
-predict the survival of some passengers based on some relevant features. As an important 
-part of the records lacked of some values, great importance has been given to the dataset 
+Analysis of the Spaceship Titanic dataset for the Getting Started Kaggle Competition:
+predict the survival of some passengers based on some relevant features. As an important
+part of the records lacked of some values, great importance has been given to the dataset
 analysis (contingency tables, countplots, histograms, etc...), that allowed to impute
 many of the missing values
 
 @author: Andrea Boselli
 """
+
 
 #%% Relevant libraries
 import os
@@ -15,405 +16,444 @@ import numpy             as np
 import pandas            as pd
 import matplotlib.pyplot as plt
 import seaborn           as sns
-import tensorflow        as tf
 from datetime                import datetime
+from sklearn.ensemble        import RandomForestClassifier
+from sklearn.experimental    import enable_iterative_imputer
+from sklearn.impute          import IterativeImputer
+from sklearn.linear_model    import LinearRegression
 from sklearn.preprocessing   import MinMaxScaler
-from scipy.stats.contingency import crosstab
-from tensorflow              import keras
-from tensorflow.keras        import layers
+from sklearn.preprocessing   import OneHotEncoder
 
 
 #%% Main settings
-Data_filepath  = os.getcwd() # path to the current dataset
-Train_filename = 'train.csv' # filename of the training data
-Test_filename  = 'test.csv'  # filename of the test     data
-plots_heights  = 3           # heights of subplots
-method_number  = 1           # name of the employed method
-Verbose1       = False       # verbose mode for images
-Verbose2       = False       # verbose mode for imputing phase
-Debug          = False       # debug mode
+Data_filepath  = os.getcwd()    # path to the current dataset
+Train_filename = 'train.csv'    # filename of the training data
+Test_filename  = 'test.csv'     # filename of the test     data
+Method_name    = 'RandomForest' # name of the employed method
+Debug          = False          # debug mode
+Verbose1       = False          # print the analysis outputs
+Verbose2       = False          # plot the analysis figures
+Verbose3       = False          # plot the contingency matrices
+Verbose4       = False          # plot the pairplots
+Verbose5       = False          # print the imputing outputs
+Verbose6       = False          # print the inference outputs
 
 
 #%% Settings for each employed method
+if(Method_name == 'RandomForest'):
+    rf_settings = {}
+    rf_settings['random_state'] = 0 # 0 for deterministic, None otherwise
 
-if(method_number == 1): # ANN approach
-    m1_settings = {}
-    m1_settings['optimizer']  = 'adam'
-    m1_settings['loss']       = 'binary_crossentropy'
-    m1_settings['batch_size'] = 16
-    m1_settings['n_epochs']   =  5
 
-    
 #%% User-defined functions
 
 def find_n_nans(data):
-    """For each column of the data DataFrame, retrieve the total number of nans"""
-    return data.isnull().sum()
+    """
+    For each column of the input DataFrame, return the total number of nans
+    """
+    return data.isna().sum()
 
-def convert_into_onehot(data, col_name, col_labels):
+def count_values_per_id(data, id_col, value_cols):
     """
-    Given the data table, the column name and its labels, create a dummy column for each label 
-    (except the last one) in the data table
+    For each value of id_col in data DataFrame, count the number of rows having
+    that id_col value, but distinct values in the value_cols columns; return the
+    absolute frequencies of these counts.
     """
-    for label in col_labels[0:-1]:
-        label_col_name = col_name+label.replace(' ','')[0:7].title()          # new column name
-        label_col      = (data[col_name]==label).replace({True: 1, False: 0}) # new column
-        label_col[data[col_name].isna()] = np.nan                             # insertion of nans
-        data.insert(loc=int(np.where(data.columns==col_name)[0][0]), column=label_col_name, value=label_col)
-        
-def count_distributions_per_group(data,input_col, cols_groups):
-    """
-    In the data DataFrame, for each different value of input_col column, check
-    the number of different records at different groups of columns; the list of 
-    columns that are check simultaneously are stored in the cols_groups list
-    """
-    for cols_group in cols_groups:
-        nlabels_per_group = data[[input_col]+cols_group].dropna().drop_duplicates().groupby(input_col).size()
-        nlabels_distr = nlabels_per_group.value_counts()
-        print("\nCurrent variables: ",cols_group,"\nThe distribution of different values combinations per "+input_col+" is:\n",nlabels_distr,'\n',sep='')
+    nlabels_per_group = data[[id_col]+value_cols].dropna().drop_duplicates().groupby(id_col).size()
+    return nlabels_per_group.value_counts()
 
-def impute_category_based_on_group(data,group_col,imputed_cols):
+def impute_value_based_on_id(data_in, id_col, value_col): # it works, but for sure there exists a more elegant approach
     """
-    In data DataFrame, impute the values in columns imputed_cols based on the
-    column group_col: if the values in imputed_cols are missing, they are searched
-    among the records with same group_col; in case of multiple possible values
-    or absence of such records, no value is imputed.
+    In data_in DataFrame, impute the values in column value_col based on the
+    id_col column, where value_col is a unique categorical column. In particular,
+    if some values in value_col are missing, they are searched among the records
+    with same id_col; in case of multiple possible values or absence of such records,
+    no value is imputed. Return the imputed frame, without modifying the original one
     """
-    lookup   = data[[group_col]+imputed_cols].dropna().drop_duplicates().drop_duplicates(subset=group_col,keep=False)
-    nan_idxs = data[data[imputed_cols[0]].isna()][[group_col]]
-    imp_values = nan_idxs.set_index(group_col).join(other=lookup.set_index(group_col)).set_index(nan_idxs.index)
-    data.loc[data[imputed_cols[0]].isna(),imputed_cols] = imp_values
-        
+    data = data_in.copy()
+    lookup = data[[id_col,value_col]].dropna().drop_duplicates().drop_duplicates(subset=id_col,keep=False) # lookup table
+    table_nans = data.loc[data[value_col].isna(), id_col]                                                  # rows with missing values
+    table_imputed = pd.merge(table_nans,lookup, how='left', on=id_col).set_index(table_nans.index).dropna()# set missing value from lookup
+    data.loc[table_imputed.index, value_col] = table_imputed[value_col]                                    # assign values
+    return data.copy()
 
-#%% Load, analyse and process training data
-data      = pd.read_csv(filepath_or_buffer = os.path.join(Data_filepath,Train_filename))
-data_test = pd.read_csv(filepath_or_buffer = os.path.join(Data_filepath,Test_filename ))
-n_data      = len(data)      # number of training samples
-n_data_test = len(data_test) # number of test     samples
 
-# Check the fraction of non-nan entries for each column
-nan_fraction      = data     .notna().sum()/n_data
-nan_fraction_test = data_test.notna().sum()/n_data_test
+#%% Load, analyse and process data
+
+# Load data
+train = pd.read_csv(filepath_or_buffer = os.path.join(Data_filepath,Train_filename))
+test  = pd.read_csv(filepath_or_buffer = os.path.join(Data_filepath,Test_filename ))
+
+# Number of samples
+n_train = len(train) # number of training samples
+n_test  = len(test ) # number of test     samples
+
+# Fractions of nan entries for all columns
+nan_frac_train = find_n_nans(train) / n_train
+nan_frac_test  = find_n_nans(test ) / n_test
 if(Verbose1):
-    print('\nThe fraction of non-nan entries for each column of the training data is:')
-    print(nan_fraction)
-    print('\nThe fraction of non-nan entries for each column of the test data is:')
-    print(nan_fraction_test)
-    
-# Extract passenger group from id, extract cabin deck and side from cabin, extract first name and surname from
-data.insert(loc=int(np.where(data.columns=='PassengerId')[0][0]), column='PassengerGroup', value=data['PassengerId'].str.split('_').str[0])
-data.insert(loc=int(np.where(data.columns=='Cabin'      )[0][0]), column='CabinDeck',      value=data['Cabin'      ].str.split('/').str[0])
-data.insert(loc=int(np.where(data.columns=='Cabin'      )[0][0]), column='CabinSide',      value=data['Cabin'      ].str.split('/').str[2])
-data.insert(loc=int(np.where(data.columns=='Name'       )[0][0]), column='FirstName',      value=data['Name'       ].str.split(' ').str[0])
-data.insert(loc=int(np.where(data.columns=='Name'       )[0][0]), column='LastName',       value=data['Name'       ].str.split(' ').str[1])
-data.drop(columns=['Name','PassengerId','Cabin'],inplace=True)
+    print('The fraction of nans for each column of the training data is:\n',nan_frac_train,'\n',sep='')
+    print('The fraction of nans for each column of the test     data is:\n',nan_frac_test, '\n',sep='')
 
-# List the columns that are employed in the different operations / plots
-columns_categorical        = ['HomePlanet','CryoSleep','CabinDeck','CabinSide','Destination','VIP','Transported']
-columns_categorical_input  = [column for column in columns_categorical if column != 'Transported']
-columns_categorical_bool   = ['CryoSleep','VIP']
-columns_categorical_nobool = [column for column in columns_categorical_input if column not in columns_categorical_bool]
-columns_continuous         = ['Age','RoomService','FoodCourt','ShoppingMall','Spa','VRDeck']
+# Many  rows  contain  missing values, both in the training and test  test;  it  is
+# very unlikely that new data will be added to the analysis,; thus, it's reasonable
+# to  merge  train  and  test sets for the analysis, the data  imputation  and  the
+# preprocessing phases
+data = pd.concat([train,test], ignore_index=True).sort_values(by='PassengerId').reset_index(drop=True) # merge train and test set
 
-# Extract the labels of each categorical variable
+# Extract many relevant columns
+data['Destination'   ] = data['Destination'].str.slice(stop=2)     # reduce characters for 'Destination'
+data['CabinDeck'     ] = data['Cabin'      ].str.split('/').str[0] # cabin deck      from 'Cabin'
+data['CabinSide'     ] = data['Cabin'      ].str.split('/').str[2] # cabin side      from 'Cabin'
+data['FirstName'     ] = data['Name'       ].str.split(' ').str[0] # first name      from 'Name'
+data['LastName'      ] = data['Name'       ].str.split(' ').str[1] # last name       from 'Name'
+data['PassengerGroup'] = pd.to_numeric(data['PassengerId'].str.split('_').str[0]) # passenger group from 'PassengerId'
+data['CabinNum'      ] = pd.to_numeric(data['Cabin'      ].str.split('/').str[1]) # cabin number    from 'Cabin'
+data.drop(columns=['Name','Cabin'],inplace=True)                                  # 'Name' and 'Cabin' can be deleted
+
+# Useful lists of data columns
+cols_categorical = ['HomePlanet','CryoSleep','Destination','VIP','CabinDeck','CabinSide','Transported'] # categorical variables
+cols_continuous  = ['Age','RoomService','FoodCourt','ShoppingMall','Spa','VRDeck']                      # continuous  variables
+cols_identifiers = ['PassengerId','PassengerGroup','FirstName','LastName','CabinNum']                   # (mostly) categorical variables with many categories
+
+# Extract the labels of the categorical variables
 categories_labels = {}
-for column in columns_categorical:
-    categories_labels[column] = data[column].value_counts().to_frame().reset_index().rename(columns={'index':'value', column:'count'})
+for col in cols_categorical:
+    categories_labels[col] = data[col].value_counts().to_frame().reset_index().rename(columns={'index':'label', col:'frequency'})
     if(Verbose1):
-        print('\nThe labels of '+column+' column are:\n', categories_labels[column], sep='')
-    
-# Plot the proportion barplots for the categorical variables and the histograms for continuous variables
-if(Verbose1):
-    # Barplots of categorical variables
-    fig,axs = plt.subplots(1,len(columns_categorical), figsize=(plots_heights*len(columns_categorical),plots_heights), tight_layout=True, dpi=800)
-    fig.suptitle('Relative frequences of categorical variables')
-    for n in range(len(columns_categorical)):
-        curr_col = columns_categorical[n]
-        curr_labels = categories_labels[curr_col]
-        axs[n].bar(x=curr_labels['value'], height=curr_labels['count']/n_data, tick_label=curr_labels['value'], color='deepskyblue')
-        if(curr_col == 'Destination'):
-            axs[n].tick_params(labelsize='x-small')
-        axs[n].set_title(curr_col)
-        axs[n].set_ylabel('Relative frequency')
-        axs[n].grid(visible=True)
-        axs[n].set_axisbelow(True)
-        
-    # Barplots of categorical variables, grouped with respect to target category
-    fig,axs = plt.subplots(1,len(columns_categorical_input), figsize=(plots_heights*len(columns_categorical_input), plots_heights), 
-                           tight_layout=True, dpi=800)
-    fig.suptitle('Relative frequences of categorical variables for each target value')
-    for n in range(len(columns_categorical_input)):
-        curr_col = columns_categorical_input[n]
-        curr_frequencies = data.groupby([curr_col, 'Transported']).size().reset_index().rename(columns={0:'count'})
-        curr_frequencies['count'] = curr_frequencies['count'] / np.sum(curr_frequencies['count'])
-        sns.barplot(data=curr_frequencies, x=curr_col, y='count', hue='Transported', ax=axs[n])
-        if(curr_col == 'Destination'):
-            axs[n].tick_params(labelsize='x-small')
-        axs[n].legend(fontsize='x-small')
-        axs[n].set_ylabel('Relative frequency')
-        axs[n].grid(visible=True)
-        axs[n].set_axisbelow(True)
-        
-    # Barplots of the proportions of zeros in all the continuous variables
-    fig, axs = plt.subplots(1, len(columns_continuous), figsize=(plots_heights*len(columns_continuous),plots_heights), tight_layout=True, dpi=800)
-    fig.suptitle('Proportions of 0 in the continuous variables')
-    for n in range(len(columns_continuous)):
-        curr_col = columns_continuous[n]
-        axs[n].bar(x=[1,2], height= [sum(data[curr_col]==0)/n_data, sum(data[curr_col]>0)/n_data], tick_label=['= 0','> 0'], color='deepskyblue')
-        axs[n].set_title (curr_col)
-        axs[n].set_ylabel('Relative frequency')
-        axs[n].grid(visible=True)
-        axs[n].set_axisbelow(True)
-    
-    # Histograms of the continuous variables (after log transformations and excluding zero values)
-    fig, axs = plt.subplots(1, len(columns_continuous), figsize=(plots_heights*len(columns_continuous),plots_heights), tight_layout=True, dpi=800)
-    fig.suptitle('Histograms of continuous variables (after log transformations and excluding zero values)')
-    for n in range(len(columns_continuous)):
-        curr_col = columns_continuous[n]
-        axs[n].hist(np.log10(data[data[curr_col] > 0][curr_col]+1), density=True, color='deepskyblue', bins=60)
-        axs[n].set_title ('Histogram - ' + curr_col)
-        axs[n].set_ylabel('Density')
-        axs[n].set_xlabel(curr_col)
-        axs[n].grid(visible=True)
-        axs[n].set_axisbelow(True)
-        
-# Plot the contingency matrices of all the couples of categorical data
+        print("The labels of '"+col+"' column are: \n", categories_labels[col], '\n',sep='')
+
+# Countplots of the categorical variables
 if(Verbose2):
-    fig, axs = plt.subplots(len(columns_categorical)-1, len(columns_categorical)-1,
-                            figsize=(plots_heights*(len(columns_categorical)-1),plots_heights*(len(columns_categorical)-1)), tight_layout=True, dpi=800)
-    fig.suptitle('Contingency matrices of the categorical data',fontsize=32)
-    for i in range(len(columns_categorical)-1):
-        for j in range(len(columns_categorical)-1):
-            if(j <= i):
-                # Create the contingency matrix
-                col_i = columns_categorical[i+1]
-                col_j = columns_categorical[j]
-                data_no_nan = data[[col_i,col_j]].dropna()
-                cont_table = crosstab(data_no_nan[col_i], data_no_nan[col_j])
-                
-                # Plot the contingency matrix
-                sns.heatmap(data = cont_table[1]/len(data_no_nan), cmap='plasma', ax = axs[i,j],
-                            yticklabels = [str(lab_name)[0:3] for lab_name in cont_table[0][0]],
-                            xticklabels = [str(lab_name)[0:3] for lab_name in cont_table[0][1]],
-                            annot = True, cbar = False, annot_kws={'fontsize':'xx-small', 'rotation':45})
-                axs[i,j].set_ylabel(col_i)
-                axs[i,j].set_xlabel(col_j)
+    curr_cols = list(set(cols_categorical)-{'Transported'})
+    sns.set_theme(style="whitegrid")
+    fig,axs = plt.subplots(1,len(curr_cols), figsize=(4*len(curr_cols), 4), dpi=800)
+    for i in range(len(curr_cols)):
+        sns.countplot(data=data, x=curr_cols[i], hue='Transported', palette='tab10', ax=axs[i])
+    fig.suptitle('Absolute frequences of categorical variables')
+    fig.tight_layout()
+
+# Get the proportions of zeros in all the continuous variables
+curr_cols = list(set(cols_continuous)-{'Age'})
+cols_zero_indicators = [col+'IsZero' for col in curr_cols]
+for col in curr_cols:
+    data[col+'IsZero'] = (data[col] == 0)            # True if zero value, False otherwise
+    data.loc[data[col].isna(),col+'IsZero'] = np.nan # set nan when necessary
+
+# Countplots of zeros occurrences of the continuous variables
+if(Verbose2):
+    curr_cols = cols_zero_indicators
+    sns.set_theme(style="whitegrid")
+    fig,axs = plt.subplots(1,len(curr_cols), figsize=(4*len(curr_cols), 4), dpi=800)
+    for i in range(len(curr_cols)):
+        sns.countplot(data=data, x=curr_cols[i], hue='Transported', palette='tab10', ax=axs[i])
+    fig.suptitle('Occurrences of zero in the continuous variables')
+    fig.tight_layout()
+
+# Histograms of the continuous variables
+if(Verbose2):
+    curr_cols = cols_continuous
+    sns.set_theme(style="whitegrid")
+    fig,axs = plt.subplots(1,len(curr_cols), figsize=(4*len(curr_cols), 4), dpi=800)
+    for i in range(len(curr_cols)):
+        sns.histplot(data=data[data[curr_cols[i]]>0], x=curr_cols[i], hue='Transported', kde=True, log_scale=True, palette='tab10', ax=axs[i])
+    fig.suptitle('Histograms of continuous variables, after log transformations and excluding zero values')
+    fig.tight_layout()
+
+# Heatmaps of the frequencies of the occurrences of 2 categorical variables (normalized by row)
+if(Verbose3):
+    curr_cols = cols_categorical
+    fig, axs = plt.subplots(len(curr_cols),len(curr_cols), figsize=(4*len(curr_cols),4*len(curr_cols)), dpi=800)
+    fig.tight_layout()
+    for i in range(len(curr_cols)):
+        for j in range(len(curr_cols)):
+
+            # Contingency matrix
+            if(i != j):
+
+                # Create contingency matrix
+                cont_matrix = pd.crosstab(data[curr_cols[i]], data[curr_cols[j]], normalize='index', margins=False)
+
+                # Plot contingency matrix
+                sns.heatmap(cont_matrix, cmap='plasma', annot=True, cbar=False, ax = axs[i,j], annot_kws={'fontsize':'xx-small', 'rotation':45})
                 axs[i,j].set_aspect('equal', adjustable='box')
-            else:
+
+            # Variable name
+            if(i == j):
+                axs[i,j].annotate(curr_cols[i], xy=(0.5, 0.5), xycoords='axes fraction', horizontalalignment='center', verticalalignment='center', fontsize='xx-large')
                 axs[i,j].axis('off')
-    
-# For each continuous variable, sum 1 and convert to logarithmic scale
-for column in columns_continuous:
-    data[column] = np.log10(data[column]+1)
-    
-# Plot the pairplot of the continuous variables and the correlation matrix of all the variables
-if(Verbose1):
-    for column in columns_categorical:
-        pp = sns.pairplot(data=data, vars=columns_continuous, hue=column,kind="hist",diag_kind='hist',corner=True)
-        pp.fig.suptitle("Pairplot of continuous variables, for each '" + column + "' group",fontsize=32)
-        pp.fig.set_dpi(800)
-    
-# Transform True/False categorical variables into 1/0 values
-for column in columns_categorical_bool:
-    data[column] = data[column].replace({True: 1, False: 0})
-    
-# Transform the other categorical variables into one-hot-encoded variables
-for column in columns_categorical_nobool:
-    convert_into_onehot(data, column, categories_labels[column]['value'])
-    data.drop(columns=column,inplace=True)
 
-# Scale continuous variables into [0,1] interval
-cont_scaler = MinMaxScaler()
-data[columns_continuous] = cont_scaler.fit_transform(data[columns_continuous])
+# Convert the bill continuous variables to logaritmic scale
+curr_cols = list(set(cols_continuous)-{'Age'})
+for col in curr_cols:
+    data[col] = np.log10(data[col]+1) # perform log-transformation
 
-# Update the categorical variables list
-columns_categorical_final = [column for column in data.columns if column not in columns_continuous and column not in ['PassengerGroup']]
+# Scale all continuous variables into [0,1] interval
+curr_cols = cols_continuous
+cont_scaler = MinMaxScaler().fit(data.loc[data['PassengerId'].isin(train['PassengerId']), curr_cols]) # fit into training data
+data[curr_cols] = cont_scaler.transform(data[curr_cols])
 
-# Print correlation matrix
-if(Verbose1):
-    fig,axs = plt.subplots(1, 2, tight_layout=True, dpi=800)
-    sns.heatmap(data[columns_continuous+['Transported']].corr(), linewidth=0.5, cmap='plasma', xticklabels=True, yticklabels=True, ax=axs[0], cbar_kws={'shrink':0.42})
-    axs[0].set_title('Correlation matrix - Continuous variables', size='small')
-    axs[0].set_aspect('equal', adjustable='box')
-    axs[0].tick_params(labelsize='x-small')
-    sns.heatmap(data[columns_categorical_final].corr(), linewidth=0.5, cmap='plasma', xticklabels=True, yticklabels=True, ax=axs[1], cbar_kws={'shrink':0.42})
-    axs[1].set_title('Correlation matrix - Categorical variables', size='small')
-    axs[1].set_aspect('equal', adjustable='box')
-    axs[1].tick_params(labelsize='x-small')
+# Pairplots of the continuous variables, for each label of the categorical variables
+if(Verbose4):
+    curr_cols = cols_categorical
+    for col in curr_cols:
+        pp = sns.pairplot(data=data, hue=col, palette='tab10', vars=cols_continuous,
+                          corner=True, dropna=True, kind='scatter', diag_kind='hist',
+                          plot_kws = dict(marker='.', alpha = 0.3, edgecolors='none'))
+        pp.fig.suptitle("Pairplot of continuous variables, for each '"+col+"' value",fontsize=32)
+        pp.fig.set_dpi(150)
 
-# Save apart the target variable
-data_out = data['Transported']*1
-data.drop(columns='Transported',inplace=True)
+# Histogram of age of people with positive bill
+if(Verbose2):
+    curr_cols = list(set(cols_continuous)-{'Age'})
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(dpi=800)
+    sns.histplot(data = data[data[curr_cols].sum(axis=1,skipna=False) > 0], x='Age', hue='Transported', kde=True, palette='tab10', ax=ax)
+    ax.set_title('Age with positive bill')
 
+# Inspect if 'PassengerGroup','FirstName','LastName','CabinNum' allow to infer some categorical variables
+if(Verbose5):
+    curr_cols_id    = list(set(cols_identifiers)-{'PassengerId'})
+    curr_cols_categ = cols_categorical
+    for col_id in curr_cols_id:
+        for col_categ in curr_cols_categ:
+            abs_freqs = count_values_per_id(data=data, id_col=col_id, value_cols=[col_categ])
+            print("For id column '"+col_id+"', the numbers of different values of category column '"+col_categ+"' are:\n",abs_freqs,'\n', sep='')
 
-#%% Perform the very same preprocessing on the test data
+# Check that people in 'CryoSleep' have no bill
+curr_cols = list(set(cols_continuous)-{'Age'})
+cryo_has_no_bill = data.loc[data['CryoSleep']==True, curr_cols].sum().sum() == 0
+if(Verbose5):
+    print('Do people in cryosleep have zero bill? ', cryo_has_no_bill, '\n')
 
-# Extract meaningful information from 'PassengerId','Cabin'
-data_test.insert(loc=int(np.where(data_test.columns=='PassengerId')[0][0]), column='PassengerGroup', value=data_test['PassengerId'].str.split('_').str[0])
-data_test.insert(loc=int(np.where(data_test.columns=='Cabin'      )[0][0]), column='CabinDeck',      value=data_test['Cabin'      ].str.split('/').str[0])
-data_test.insert(loc=int(np.where(data_test.columns=='Cabin'      )[0][0]), column='CabinSide',      value=data_test['Cabin'      ].str.split('/').str[2])
-data_test.insert(loc=int(np.where(data_test.columns=='Name'       )[0][0]), column='FirstName',      value=data_test['Name'       ].str.split(' ').str[0])
-data_test.insert(loc=int(np.where(data_test.columns=='Name'       )[0][0]), column='LastName',       value=data_test['Name'       ].str.split(' ').str[1])
-data_test_id = data_test['PassengerId']
-data_test.drop(columns=['Name','PassengerId','Cabin'],inplace=True)
+# Scatterplot of 'PassengerGroup' and 'CabinNum'
+if(Verbose2):
+    sns.set_theme(style="whitegrid")
+    fig, axs = plt.subplots(1,2, figsize=(4*2,4), dpi=800)
+    sns.scatterplot(data=data, x='PassengerGroup', y='CabinNum', hue='CabinDeck', palette='tab10', edgecolor='none', s=1, ax=axs[0])
+    sns.scatterplot(data=data, x='PassengerGroup', y='CabinNum', hue='CabinSide', palette='tab10', edgecolor='none', s=1, ax=axs[1])
+    fig.suptitle('CabinDeck VS PassengerGroup')
+    fig.tight_layout()
 
-# For each continuous variable, sum 1 and convert to logarithmic scale
-for column in columns_continuous:
-    data_test[column] = np.log10(data_test[column]+1)
-    
-# Transform True/False categorical variables into 1/0 values
-for column in columns_categorical_bool:
-    data_test[column] = data_test[column].replace({True: 1, False: 0})
+# Retrieve the distribution of people in each cabin
+deck_max_CabinNum = {}
+deck_people_distr = {}
+deck_nums_empty   = {}
+max_people_per_cabin = 0
+for deck in categories_labels['CabinDeck']['label']:
+    deck_max_CabinNum[deck] = int(data.loc[data['CabinDeck']==deck, 'CabinNum'].max())                                                   # maximal CabinNum
+    deck_people_distr[deck] = pd.crosstab(data.loc[data['CabinDeck']==deck, 'CabinNum' ],data.loc[data['CabinDeck']==deck, 'CabinSide']) # people distribution
+    deck_nums_empty  [deck] = set(range(deck_max_CabinNum[deck]+1))-set(deck_people_distr[deck].index)                                   # empty cabin numbers
+    max_people_per_cabin = max(max_people_per_cabin, deck_people_distr[deck].max().max())                                                # maximal number of people in a cabin
 
-# Transform the other categorical variables into one-hot-encoded variables
-for column in columns_categorical_nobool:
-    convert_into_onehot(data_test, column, categories_labels[column]['value'])
-    data_test.drop(columns=column,inplace=True)
+# Plot the distribution of people in each cabin
+if(Verbose2):
+    fig, axs = plt.subplots(1,len(categories_labels['CabinDeck']['label']), figsize=(4*len(categories_labels['CabinDeck']['label']),4), dpi=800)
+    index=0
+    for deck in categories_labels['CabinDeck']['label']:
+        sns.heatmap(deck_people_distr[deck], cmap='rainbow', vmin=0, vmax=max_people_per_cabin, ax = axs[index], cbar=True)
+        axs[index].set_title('Deck '+deck)
+        index+=1
+    fig.suptitle('Distribution of people in each cabin')
+    fig.tight_layout()
 
-# Scale continuous variables into [0,1] interval
-data_test[columns_continuous] = cont_scaler.transform(data_test[columns_continuous])
+# Inspect the relation between the available ID variables
+if(Verbose5):
+    curr_cols = list(set(cols_identifiers)-{'PassengerId'})
+    for col1 in curr_cols:
+        for col2 in list(set(curr_cols)-{col1}):
+            abs_freqs = count_values_per_id(data, col1, [col2])
+            print("For id column '"+col1+"', the numbers of different values of category column '"+col2+"' are:\n",abs_freqs,'\n', sep='')
 
-# Check that the columns of training and test data correspond
-assert np.all(data_test.columns == data.columns)
+# Add 'GroupSize' and 'GroupAlone' as features
+counts_by_group = data[['PassengerGroup','PassengerId']].groupby('PassengerGroup').count().reset_index(drop=False) # number of passengers per group
+counts_by_id    = pd.merge(left=data[['PassengerGroup']], right=counts_by_group, how='left')                       # number of passengers, assigned to each id
+data['GroupSize' ] = counts_by_id['PassengerId'].copy()
+data['GroupAlone'] = (data['GroupSize'] == 1)
 
+# Retrieve the zero_bill indicator (retaining NaNs)
+curr_cols = list(set(cols_continuous)-{'Age'})
+zerobill = (data[curr_cols].sum(axis=1) == 0)
+zerobill[(data[curr_cols].sum(axis=1) == 0) & data[curr_cols].sum(axis=1,skipna=False).isna()] = np.nan
 
-#%% Data inputing on training data
+# Inspect the relation between the bill absence and 'CryoSleep'
+cryo_vs_zerobill = pd.crosstab(data['CryoSleep'], zerobill)
+if(Verbose5):
+    print("The relation between the bill absence and 'CryoSleep' is: \n", cryo_vs_zerobill, '\n')
+
+#%% Strong data imputing
 
 # Compute the number of NaNs before imputing
 n_nan_before = find_n_nans(data)
 
-# Columns lists
-cols_expenses    = ['RoomService','FoodCourt','ShoppingMall','Spa','VRDeck']
-cols_binary      = ['CryoSleep','CabinSideS','VIP']
-cols_homeplanet  = [col for col in data.columns if 'HomePlanet'   in col]
-cols_deck        = [col for col in data.columns if 'CabinDeck'    in col]
-cols_destination = [col for col in data.columns if 'Destination'  in col]
-
 # Determine the age before which there are no expenses and impute consequently
-max_age_no_money = data[data[cols_expenses].sum(axis=1,skipna=False) == 0]['Age'].max()
-data.loc[data['Age'] <= max_age_no_money,cols_expenses] = 0
+curr_cols = list(set(cols_continuous)-{'Age'})
+max_age_no_bill = data.loc[data[curr_cols].sum(axis=1,skipna=False) > 0,'Age'].min() # works also on log-transformed columns
+data.loc[data['Age'] < max_age_no_bill,curr_cols           ] = 0    # impute bill variables
+data.loc[data['Age'] < max_age_no_bill,cols_zero_indicators] = True # impute zero-bill indicators
 
-# Inspect if 'PassengerGroup','FirstName','LastName' allow to infer some categorical variables
-vars_inputs = ['PassengerGroup','FirstName','LastName']
-vars_groups = [cols_homeplanet, cols_deck, cols_destination] + [[col] for col in cols_binary]
-if(Verbose2):
-    for var_input in vars_inputs:
-        count_distributions_per_group(data,var_input, vars_groups)
+# Impute 'HomePlanet' from 'CabinDeck', as suggested by the contingency matrices
+data.loc[data['CabinDeck'].isin(['A','B','C','T']),'HomePlanet'] = 'Europa'
+data.loc[data['CabinDeck'].isin(['G'            ]),'HomePlanet'] = 'Earth'
 
-# 'CabinSide' and 'HomePlanet' can be imputed starting from 'PassengerGroup' and 'LastName'
-for vars_group in [cols_homeplanet, ['CabinSideS']]:
-    impute_category_based_on_group(data,'PassengerGroup',vars_group)
-impute_category_based_on_group(data,'LastName',cols_homeplanet)
+# Impute 'HomePlanet' based on 'PassengerGroup' and 'LastName'
+data = impute_value_based_on_id(data,'PassengerGroup','HomePlanet')
+data = impute_value_based_on_id(data,'LastName',      'HomePlanet')
 
-# Impute 'HomePlanet' based on 'CabinDeck' (as suggested by the contingency matrices)
-data.loc[data['CabinDeckA'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data.loc[data['CabinDeckB'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data.loc[data['CabinDeckC'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data.loc[data['CabinDeckD'] == 1,cols_homeplanet] = [1,0] # 'HomePlanet' = Earth
+# Impute 'CabinSide' based on 'PassengerGroup'
+data = impute_value_based_on_id(data,'PassengerGroup','CabinSide')
 
-# Check that people in 'CryoSleep' have no bill and impute the bill variables consequently
-cryo_has_no_bill = data[data['CryoSleep']==1][cols_expenses].sum().sum() == 0
-if(Verbose2):
-    print('Do people in cryosleep have no bill? ', cryo_has_no_bill)
-data.loc[data['CryoSleep']==1,                         cols_expenses] = 0 # CryoSleep -> bill = 0
-data.loc[data[cols_expenses].sum(axis=1,skipna=False)!=0,'CryoSleep'] = 0 # bill != 0 -> !CryoSleep 
-    
-# Impute VIP variables based on 'HomePlanet' and 'CabinDeck'
-data.loc[data['HomePlanetEarth'] == 1,'VIP'] = 0 # 'VIP' = 0
-data.loc[data['CabinDeckG'     ] == 1,'VIP'] = 0 # 'VIP' = 0
-    
+# Impute values considering that people in 'CryoSleep' have no bill
+curr_cols = list(set(cols_continuous)-{'Age'})
+data.loc[data['CryoSleep']==True, curr_cols           ] = 0      # CryoSleep -> bill = 0
+data.loc[data['CryoSleep']==True, cols_zero_indicators] = True   # CryoSleep -> bill = 0
+data.loc[data[curr_cols].sum(axis=1)>0,'CryoSleep']     = False  # bill > 0  -> !CryoSleep
+
 # Compute the number of NaNs after strong imputing
 n_nan_after_strong = find_n_nans(data)
- 
-# Perform weaker imputings to fill as many columns as possible
-for column in ['VIP']+cols_expenses:
-    data[column].fillna(0, inplace=True)                            # set to 0 all VIP and bill NaN records
-data.loc[data[cols_destination[0]].isna(),cols_destination] = [1,0] # set the NaN destinations to the most frequent value
-data.loc[data[cols_homeplanet [0]].isna(),cols_homeplanet ] = [1,0] # set the NaN homplanets   to the most frequent value
 
-# Replace columns containing NaNs with further one-hot encoded columns
-data['CryoSleepY']  = data['CryoSleep' ].replace(to_replace={np.nan:0})
-data['CryoSleepN']  = data['CryoSleep' ].replace(to_replace={np.nan:0, 1:0, 0:1})
-data['CabinSideSY'] = data['CabinSideS'].replace(to_replace={np.nan:0})
-data['CabinSideSN'] = data['CabinSideS'].replace(to_replace={np.nan:0, 1:0, 0:1})
 
-# Remove the irrelevant columns for the classification
-data.drop(columns=['PassengerGroup','FirstName','LastName','Age','CryoSleep','CabinSideS']+cols_deck,inplace=True)
+#%% Weak data imputing
 
-# Compute the number of NaNs after weaker imputing
+# Impute all NaN 'VIP' equal to False
+data['VIP'].fillna(False, inplace=True)
+
+# Impute 'HomePlanet' based on 'VIP'
+data.loc[(data['VIP']==True ) & data['HomePlanet'].isna(),'HomePlanet'] = "Europa"
+data.loc[(data['VIP']==False) & data['HomePlanet'].isna(),'HomePlanet'] = "Earth"  # when dealing with categorical data, be always precise with categories names
+
+# Impute all NaN 'Destination' equal to 'TR'
+data['Destination'].fillna('TR', inplace=True)
+
+# Impute 'LastName' based on 'PassengerGroup'
+data = impute_value_based_on_id(data,'PassengerGroup','LastName')
+
+# Impute 'CabinDeck' based on 'PassengerGroup'
+data = impute_value_based_on_id(data,'PassengerGroup','CabinDeck')
+
+# Impute 'CabinDeck' based on 'HomePlanet'
+data.loc[(data['HomePlanet']=="Mars") & data['CabinDeck'].isna(),'CabinDeck'] = 'F'
+
+# Set dummy categories for 'CabinDeck' and 'CabinSide' that couldn't be imputed
+data['CabinDeck'].fillna('U', inplace=True)
+data['CabinSide'].fillna('U', inplace=True)
+
+# Set 'CabinNum' based on 'CabinDeck' and 'CabinSide'
+for deck in categories_labels['CabinDeck']['label']:
+    for side in ['U','P','S']:
+        sides_for_fit = [side] if (side in ['P','S']) else ['P','S']                                    # fit on both sides in case of unknown side
+        fit_condition = (data['CabinDeck']==deck) & (data['CabinSide']==side) & data['CabinNum'].isna() # records that can be imputed at the current iteration
+        if(Debug):
+            print("Current deck '"+deck+"' - Current side '"+side+"'")                 # debug outputs
+            print(data.loc[fit_condition, ['CabinDeck','CabinSide','CabinNum'] ],'\n') # imputable rows
+
+        if(fit_condition.sum() > 0):
+            line_train_data = data.loc[(data['CabinDeck']==deck) & data['CabinSide'].isin(sides_for_fit) & ~data['CabinNum'].isna(), ['PassengerGroup','CabinNum']] # training data
+            regr_line = LinearRegression().fit(line_train_data[['PassengerGroup']], line_train_data[['CabinNum']])                                                  # fitted line
+            predicted_nums = regr_line.predict(data.loc[fit_condition,['PassengerGroup']]).round().astype(int)                                                      # predicted values
+            data.loc[fit_condition, ['CabinNum'] ] = predicted_nums
+
+# Impute Cryosleep based on bill variables
+curr_cols = list(set(cols_continuous)-{'Age'})
+data.loc[(data[curr_cols].sum(axis=1,skipna=False) == 0) & data['CryoSleep'].isna(), 'CryoSleep'] = True # bill == 0  -> CryoSleep
+data['CryoSleep'].fillna(False, inplace=True)                                                            # mode for the remaining records
+
+# Impute bill variables and the consequent booleans (TODO: improve with a more sophisticated method)
+curr_cols = list(set(cols_continuous)-{'Age'})
+bill_imputer = IterativeImputer(random_state=0).fit(data[curr_cols]) # train the imputer
+data[curr_cols] = bill_imputer.transform(data[curr_cols])            # impute the continuous variables
+for col in curr_cols:
+    data.loc[data[col+'IsZero'].isna(), col+'IsZero'] = (data.loc[data[col+'IsZero'].isna(), col] == 0) # impute the zero-value indicators
+if(Verbose5):
+    print("Does the imputing of bill variables violate the [0,1] range? ", bool(((data[curr_cols]>1) | (data[curr_cols]<0)).sum().sum()), '\n')
+
+
+# Compute the number of NaNs after weaker imputing and print imputing status
 n_nan_after_weak = find_n_nans(data)
 nans_table  = pd.DataFrame({'Before':n_nan_before, 'After_strong':n_nan_after_strong, 'After_weak': n_nan_after_weak})
-print('\nThe number of NaNs for each column of training data (before and after imputing) are:\n', nans_table, sep='')
+if(Verbose5):
+    print('The number of NaNs for each column of training data are:\n',nans_table,'\n', sep='')
 
 
-#%% Perform the very same imputing process on the test data
-data_test.loc[data_test['Age'] <= max_age_no_money,cols_expenses] = 0     # impute bill variables based on 'Age'
-for vars_group in [cols_homeplanet, ['CabinSideS']]:
-    impute_category_based_on_group(data_test,'PassengerGroup',vars_group) # impute 'CabinSide' and 'HomePlanet' from 'PassengerGroup' groupings
-impute_category_based_on_group(data_test,'LastName',cols_homeplanet)      # impute 'HomePlanet' from 'LastName' groupings
+#%% Data preparation for the learning process
 
-# Impute 'HomePlanet' based on 'CabinDeck' (as suggested by the contingency matrices)
-data_test.loc[data_test['CabinDeckA'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data_test.loc[data_test['CabinDeckB'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data_test.loc[data_test['CabinDeckC'] == 1,cols_homeplanet] = [0,1] # 'HomePlanet' = Europe
-data_test.loc[data_test['CabinDeckD'] == 1,cols_homeplanet] = [1,0] # 'HomePlanet' = Earth
+# Delete hopeless columns
+curr_cols = ['FirstName','LastName','PassengerGroup']
+data.drop(columns=curr_cols,inplace=True)
 
-# Further strong imputings
-data_test.loc[data_test['CryoSleep']==1,                         cols_expenses] = 0 # CryoSleep -> bill = 0
-data_test.loc[data_test[cols_expenses].sum(axis=1,skipna=False)!=0,'CryoSleep'] = 0 # bill != 0 -> !CryoSleep 
-data_test.loc[data_test['HomePlanetEarth'] == 1,'VIP'] = 0 # impute VIP based on 'HomePlanet'
-data_test.loc[data_test['CabinDeckG'     ] == 1,'VIP'] = 0 # impute VIP based on 'CabinDeck'
+# Convert suitable categorical variables to 1/0 variables (if there remains some NaNs, it returns error)
+curr_cols = ['CryoSleep','VIP','ShoppingMallIsZero','VRDeckIsZero','FoodCourtIsZero','RoomServiceIsZero','SpaIsZero','GroupAlone']
+data[curr_cols] = data[curr_cols].astype(int)
 
-# Weaker imputings to fill as many columns as possible
-for column in ['VIP']+cols_expenses:
-    data_test[column].fillna(0, inplace=True)                                 # set to 0 all VIP and bill NaN records
-data_test.loc[data_test[cols_destination[0]].isna(),cols_destination] = [1,0] # set the NaN destinations to the most frequent value
-data_test.loc[data_test[cols_homeplanet [0]].isna(),cols_homeplanet ] = [1,0] # set the NaN homplanets   to the most frequent value
+# Convert suitable categorical variables to one-hot-encoded variables (NaNs should not be present)
+curr_cols = ['HomePlanet','Destination','CabinDeck','CabinSide']
+onehot_encoders = {}
+for col in curr_cols:
+    
+    # Perform conversion
+    onehot_encoder = OneHotEncoder(sparse=False).fit(data[[col]])       # (sparse option deprecated in the latest version)
+    col_transform = pd.DataFrame(onehot_encoder.transform(data[[col]])) # one-hot encoding
+    col_transform.columns = onehot_encoder.get_feature_names_out()      # set suitable names for the transformation
+    
+    # Store the results
+    data[col_transform.columns] = col_transform # save one-hot encoded data
+    data.drop(columns=col,inplace=True)         # remove original column
+    onehot_encoders[col] = onehot_encoder       # save one-hot encoder
 
-# Replace columns containing NaNs with further one-hot encoded columns
-data_test['CryoSleepY']  = data_test['CryoSleep' ].replace(to_replace={np.nan:0})
-data_test['CryoSleepN']  = data_test['CryoSleep' ].replace(to_replace={np.nan:0, 1:0, 0:1})
-data_test['CabinSideSY'] = data_test['CabinSideS'].replace(to_replace={np.nan:0})
-data_test['CabinSideSN'] = data_test['CabinSideS'].replace(to_replace={np.nan:0, 1:0, 0:1})
+# Scale the continuous variables which have not been scaled yet
+curr_cols = ['CabinNum','GroupSize']
+further_cont_scalers = {}
+for col in curr_cols:
+    further_cont_scaler = MinMaxScaler().fit(data.loc[data['PassengerId'].isin(train['PassengerId']),[col]]) # fit into training data
+    data[col] = further_cont_scaler.transform(data[[col]])                                                   # perform scaling
+    further_cont_scalers[col] = further_cont_scaler                                                          # store scaler
 
-# Remove the irrelevant columns for the classification
-data_test.drop(columns=['PassengerGroup','FirstName','LastName','Age','CryoSleep','CabinSideS']+cols_deck,inplace=True)
+# Remove the columns that couldn't be fully imputed
+curr_cols = ['Age','CabinNum']
+data.drop(columns=curr_cols,inplace=True)
 
-# Compute the number of NaNs after weaker imputing
-print('\nThe number of NaNs for each column of test data (before and after imputing) are:\n', find_n_nans(data_test), sep='')
-
-# Check that the columns of training and test data correspond
-assert np.all(data_test.columns == data.columns)
+# Split training and test set, properly handle the 'Transported' column
+if(Verbose6):
+    print('Are training and test data monotonically increasing? ', train['PassengerId'].is_monotonic_increasing, 
+          ',',                                                     test ['PassengerId'].is_monotonic_increasing, '\n') # check monotonicity
+X_train = data.loc[data['PassengerId'].isin(train['PassengerId'])].copy() # ID, input, output of train
+X_test  = data.loc[data['PassengerId'].isin(test ['PassengerId'])].copy() # ID, input, output of test
+y_train = X_train['Transported'].astype(int).to_numpy(copy=True)          # output of train
+I_train = X_train['PassengerId'].to_numpy(copy=True)                      # ID of train
+I_test  = X_test ['PassengerId'].to_numpy(copy=True)                      # ID of test
+X_train.drop(columns=['PassengerId','Transported'],inplace=True)          # input of train
+X_test.drop (columns=['PassengerId','Transported'],inplace=True)          # input of test
 
 
 #%% Build the predictor and perform the prediction
+if(Method_name == 'RandomForest'):
+    rf_classifier = RandomForestClassifier(random_state=rf_settings['random_state']).fit(X_train, y_train) # fit the rf classifier
+    y_test = rf_classifier.predict(X_test)                                                                 # predict on test data
 
-# Convert the data DataFrame to a NumPy array
-X = data    .to_numpy()
-y = data_out.to_numpy().reshape((-1,1))
 
-# Keras model instantiation and input
-ann = keras.models.Sequential()
-ann.add(keras.Input(shape=(X.shape[1],)))
-
-# Keras model hidden part
-ann.add(layers.Dense(units=64, activation='relu'))
-ann.add(layers.Dense(units=32, activation='relu'))
-
-# Keras model output
-ann.add(layers.Dense(units=1, activation='sigmoid'))
-
-# Model inspection
-assert ann.predict(X).shape == y.shape
-ann.summary()
-
-# Model compiling and training
-ann.compile(optimizer=m1_settings['optimizer'],loss=m1_settings['loss'],metrics=['Accuracy'])
-ann.fit(x=X,y=y,batch_size=m1_settings['batch_size'],epochs=m1_settings['n_epochs'],verbose=1,shuffle=True)
-
-# Model prediction
-y_test = ann.predict(data_test.to_numpy()).flatten() > 0.5
-prediction_table = pd.DataFrame({'PassengerId': data_test_id, 'Transported': y_test})
+#%% Generate the .csv with the predictions
+y_test = y_test.astype(bool)                                                   # convert 1/0 to boolean
+prediction_table = pd.DataFrame({'PassengerId': I_test, 'Transported': y_test})# build the prediction table
 if(not Debug):
-    prediction_filename = 'predictions_Boselli_SpaceShipTitanic_' + f'{datetime.now():%Y-%m-%d_%H-%M-%S%z}' + '.csv'
+    prediction_filename = 'Predictions_SpaceShipTitanic_Boselli_' + Method_name + '_' + f'{datetime.now():%Y-%m-%d_%H-%M-%S%z}' + '.csv'
     prediction_table.to_csv(path_or_buf=os.path.join(Data_filepath,prediction_filename),index=False)
+
+
+#%% Performed imputations
+
+# AGE -> BILL VARIABLES
+# CABIN_DECK -> HOME_PLANET
+# PASSENGER_GROUP, LAST_NAME -> HOME_PLANET
+# PASSENGER_GROUP -> CABIN_SIDE
+# BILL VARIABLES <-> CRYO_SLEEP
+# -----------------------------------------
+# VIP ALL FALSE
+# VIP -> HOMEPLANET
+# DESTINATION ALL TR
+# PASSENGER_GROUP -> LAST_NAME
+# PASSENGER_GROUP -> CABIN_DECK
+# HOMEPLANET -> CABIN_DECK
+# CABINDECK, CABINSIDE TO U
+# CABINDECK, CABINSIDE -> CABIN_NUN
+# BILL VARIABLES -> CRYO_SLEEP
+# BILL_VARIABLES 
