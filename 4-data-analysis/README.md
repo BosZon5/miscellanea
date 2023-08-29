@@ -6,4 +6,6 @@
 
 ## Sections
 
-```italy-municipalities-visualizations```: extraction and visualization through *Tableau software* of data from Istat website; data concerns three *Italian administrative divisions*: regions, provinces, and municipalities.
+```italy-municipalities-visualizations```: extraction and visualization through *Tableau software* of data from Istat website; data concerns three *Italian administrative divisions*: regions, provinces, and municipalities;
+
+```italy-municipalities-visualizations```: extraction and visualization through *Tableau software* of *time series* from Istat website; data concerns demography, education, urbanization, energy and land use in Italy.
